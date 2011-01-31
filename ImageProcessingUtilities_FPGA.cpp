@@ -392,16 +392,13 @@ void ImageProcessingUtilities_FPGA::GrayscaleConvolution( int *psw, int *psh, in
 
     void ImageProcessingUtilities_FPGA::MakeGradientArray( int H_array[], int V_array[], int *width, int *height, int *wL, int *wR, int *wT, int *wB, int grad_array[] )
     {
-    	clock_start("ImageProcessingUtilities_FPGA::MakeGradientArray");
-#if 0
         // Output is grad_array
 		//H_array and V_array MUST have same dimensions
 		int ij;
         int max_1byte_int = 32767;
         int t;
 
-
-
+        clock_start("ImageProcessingUtilities_FPGA::MakeGradientArray");
         for (int i = *wL; i <= *wR; i++)
         {
             for (int j = *wT; j <= *wB; j++)
@@ -413,10 +410,11 @@ void ImageProcessingUtilities_FPGA::GrayscaleConvolution( int *psw, int *psh, in
                 	grad_array[ij] = max_1byte_int;
                 } else if (t < -max_1byte_int) {
                 	grad_array[ij] = -max_1byte_int;
+                } else {
+                    grad_array[ij] = t;
                 }
             }
         }
-#endif
         clock_end();
     }
 
@@ -535,13 +533,11 @@ void ImageProcessingUtilities_FPGA::GrayscaleConvolution( int *psw, int *psh, in
         {
             for (int j = *wT; j <= *wB; j++)
             {
+                //Testing loop stuffing
+                ij = i + (*width * j);
+
                 int H_arrayij = H_array[ij]; //do it once
                 int V_arrayij = V_array[ij]; //do it once
-
-				ij = i + (*width * j);
-
-                //Testing loop stuffing
-
 
 				//MakeGradientArray
                 grad = AbsInt(H_arrayij) + AbsInt(V_arrayij);
@@ -691,7 +687,6 @@ void ImageProcessingUtilities_FPGA::GrayscaleConvolution( int *psw, int *psh, in
     void ImageProcessingUtilities_FPGA::Make_0_to_400_DirectionArray( int H[], int V[], int *width, int *height, int *wL, int *wR, int *wT, int *wB, int dir[] )
     {
     	clock_start("ImageProcessingUtilities_FPGA::Make_0_to_400_DirectionArray");
-#if 0
         //Output is dir
 
 		//Bright circular object will be 0 dir at top and + or - 400 at bottom
@@ -759,7 +754,6 @@ void ImageProcessingUtilities_FPGA::GrayscaleConvolution( int *psw, int *psh, in
                 }
             }
         }
-#endif
         clock_end();
     }
 
