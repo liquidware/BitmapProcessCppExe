@@ -7,32 +7,6 @@
 #include "ProcessImage.h"
 #include "ImageProcessingUtilities_FPGA.h"
 
-#define DUFF_DEVICE_16(aCount, aAction) \
-do { \
-    int32_t count_ = (aCount); \
-    int32_t times_ = (count_ + 15) >> 4; \
-    switch (count_ & 15)        \
-    { \
-        case 0: do { aAction; \
-        case 15: aAction; \
-        case 14: aAction; \
-        case 13: aAction; \
-        case 12: aAction; \
-        case 11: aAction; \
-        case 10: aAction; \
-        case 9: aAction; \
-        case 8: aAction; \
-        case 7: aAction; \
-        case 6: aAction; \
-        case 5: aAction; \
-        case 4: aAction; \
-        case 3: aAction; \
-        case 2: aAction; \
-        case 1: aAction; \
-    } while (--times_ > 0); \
-    } \
-} while (0)
-
 ImageProcessingUtilities_FPGA::ImageProcessingUtilities_FPGA(void)
 {
 }
@@ -110,236 +84,152 @@ void neon_conv(int32_t a[4],
   vst1q_s32(a, ain); //store
 }
 
-	void ImageProcessingUtilities_FPGA::GrayscaleConvolution( int *psw, int *psh, int *wL, int *wR, int *wT, int *wB, int source[], int *ksize, int kernel[5][5], float *gain, int result[] )
-    {
-        //Note: we are assuming that any kernel_element*255 is significantly smaller than integer resolution
-		//psw and psh are pointers to width and height of image array; wL, wR, wT, and wB are pntrs to boundaries (row or column numbers) of a window within image array
-		//row and col numbers start from 0, so max row number is image height-1 and max col number is image width-1.
-		//The image array ("source") is a single subscripted array, where subscript == col_number + (image widthe * row_number).
-		//The kernel is a square, double subscript array kernel[col][row].  Column and row numbers start from 0. 
-		//The "result" is returned in the same single subscript array form as the "source".  
-		bool sstop = false; //debug
-        int kw, kh, sw, sh, outrow, outcol, krow, kcol, inrow, incol, OutcolOutrow, IncolInrow, kwOfst, khOfst;
-        //float sum, ksum, temp;
-        int ksum;
-        int temp;
-        int sum;
-        long maxint = 32767.0;
-        //float maxint = 2147483647;
-        kw = *ksize;
-        kh = *ksize;
-		sw = *psw;
-		sh = *psh;
-		kwOfst = (kw-1)/2; 
-		khOfst = (kh-1)/2;
-        ksum = 0;
-        clock_start("ImageProcessingUtilities_FPGA::GrayscaleConvolution");
+/**
+ * Convolution Example Run Notes: 
+ *   //pixel
+    sum=58.000000,kernel[0][0],source[1605]
+    sum=474.000000,kernel[1][0],source[1606]
+    sum=1209.000000,kernel[2][0],source[1607]
+    
+    sum=1393.000000,kernel[0][1],source[1925]
+    sum=2929.000000,kernel[1][1],source[1926]
+    sum=5971.000000,kernel[2][1],source[1927]
+    
+    sum=6601.000000,kernel[0][2],source[2245]
+    sum=9721.000000,kernel[1][2],source[2246]
+    sum=13698.000000,kernel[2][2],source[2247]
+    
+    //pixel
+    sum=104.000000,kernel[0][0],source[1606]
+    sum=524.000000,kernel[1][0],source[1607]
+    sum=1259.000000,kernel[2][0],source[1608]
+    sum=1643.000000,kernel[0][1],source[1926]
+    sum=3515.000000,kernel[1][1],source[1927]
+    sum=6323.000000,kernel[2][1],source[1928]
+    sum=7163.000000,kernel[0][2],source[2246]
+    sum=9685.000000,kernel[1][2],source[2247]
+    sum=14031.000000,kernel[2][2],source[2248]
 
-        /* Construct a kernel for the neon vector processor */
-        int kernel_neon[4][4]  = {
-        		{kernel[0][0], kernel[1][0], kernel[2][0], 0},
-        		{kernel[0][1], kernel[1][1], kernel[2][1], 0},
-        		{kernel[0][2], kernel[1][2], kernel[2][2], 0},
-        };
+ */
+void ImageProcessingUtilities_FPGA::GrayscaleConvolution( int *psw, int *psh, int *wL, int *wR, int *wT, int *wB, int source[], int *ksize, int kernel[5][5], float *gain, int result[] )
+{
+    //Note: we are assuming that any kernel_element*255 is significantly smaller than integer resolution
+    //psw and psh are pointers to width and height of image array; wL, wR, wT, and wB are pntrs to boundaries (row or column numbers) of a window within image array
+    //row and col numbers start from 0, so max row number is image height-1 and max col number is image width-1.
+    //The image array ("source") is a single subscripted array, where subscript == col_number + (image widthe * row_number).
+    //The kernel is a square, double subscript array kernel[col][row].  Column and row numbers start from 0. 
+    //The "result" is returned in the same single subscript array form as the "source".  
+    bool sstop = false; //debug
+    int kw, kh, sw, sh, outrow, outcol, krow, kcol, inrow, incol, OutcolOutrow, IncolInrow, kwOfst, khOfst;
+    //float sum, ksum, temp;
+    int ksum;
+    int temp;
+    int sum;
+    long maxint = 32767.0;
+    //float maxint = 2147483647;
+    kw = *ksize;
+    kh = *ksize;
+    sw = *psw;
+    sh = *psh;
+    kwOfst = (kw-1)/2; 
+    khOfst = (kh-1)/2;
+    ksum = 0;
+    clock_start("ImageProcessingUtilities_FPGA::GrayscaleConvolution");
 
-        //get sum of kernel elements for normalization
-        for (krow = 0; krow < kw; krow++)
-            for (kcol = 0; kcol < kh; kcol++)
-			{
-                ksum += kernel[kcol][krow];
-			}
-        if (ksum <= 0) ksum = 1;//protect against divide by zero
-        //printf("ksum=%d\n", ksum);
+    /* Construct a kernel for the neon vector processor */
+    int kernel_neon[4][4]  = {
+            {kernel[0][0], kernel[1][0], kernel[2][0], 0},
+            {kernel[0][1], kernel[1][1], kernel[2][1], 0},
+            {kernel[0][2], kernel[1][2], kernel[2][2], 0},
+    };
 
-        //zero (kh-1)/2 rows and (kw-1)/2 cols on each edge of  the result array (we cannot compute the convolution on these boarders)
-        for (outrow = *wT; outrow < *wT + (khOfst); outrow++)
-            for (outcol = *wL; outcol <= *wR; outcol++)
-			{
-				OutcolOutrow = outcol + (sw * outrow);
-                result[OutcolOutrow] = 0;
-			}
-        for (outrow = *wB; outrow > *wB -(khOfst); outrow--)
-            for (outcol = *wL; outcol <= *wR; outcol++)
-			{
-				OutcolOutrow = outcol + (sw * outrow);
-                result[OutcolOutrow] = 0;
-			}
-		for (outcol =  *wL; outcol < *wL + (kwOfst); outcol++)
-			for (outrow = *wT; outrow <= *wB; outrow++)
-			{
-				OutcolOutrow = outcol + (sw * outrow);
-                result[OutcolOutrow] = 0;
-			}
-        for (outcol = *wR; outcol > *wR - (kwOfst); outcol--)
-            for (outrow = *wT; outrow <= *wB; outrow++)
-			{
-				OutcolOutrow = outcol + (sw * outrow);
-                result[OutcolOutrow] = 0;
-			}
-
-        int32_t my_sum[12];
-        int wT_loc = *wT;
-        int wB_loc = *wB;
-        int wL_loc = *wL;
-        int wR_loc = *wR;
-
-        //slide the convolution kernel over the image (within defined image window) to get each pixel of result array
-        for (outrow = *wT + ((kh - 1) / 2); outrow <= *wB - (kh - 1) / 2; outrow++)
+    //get sum of kernel elements for normalization
+    for (krow = 0; krow < kw; krow++)
+        for (kcol = 0; kcol < kh; kcol++)
         {
-            for (outcol = *wL + (kh - 1) / 2; outcol <= *wR - (kw - 1) / 2; outcol++)
-            {
-                //compute current pixel
-                //sum = 0;
+            ksum += kernel[kcol][krow];
+        }
+    if (ksum <= 0) ksum = 1;//protect against divide by zero
+    //printf("ksum=%d\n", ksum);
+
+    //zero (kh-1)/2 rows and (kw-1)/2 cols on each edge of  the result array (we cannot compute the convolution on these boarders)
+    for (outrow = *wT; outrow < *wT + (khOfst); outrow++)
+        for (outcol = *wL; outcol <= *wR; outcol++)
+        {
+            OutcolOutrow = outcol + (sw * outrow);
+            result[OutcolOutrow] = 0;
+        }
+    for (outrow = *wB; outrow > *wB -(khOfst); outrow--)
+        for (outcol = *wL; outcol <= *wR; outcol++)
+        {
+            OutcolOutrow = outcol + (sw * outrow);
+            result[OutcolOutrow] = 0;
+        }
+    for (outcol =  *wL; outcol < *wL + (kwOfst); outcol++)
+        for (outrow = *wT; outrow <= *wB; outrow++)
+        {
+            OutcolOutrow = outcol + (sw * outrow);
+            result[OutcolOutrow] = 0;
+        }
+    for (outcol = *wR; outcol > *wR - (kwOfst); outcol--)
+        for (outrow = *wT; outrow <= *wB; outrow++)
+        {
+            OutcolOutrow = outcol + (sw * outrow);
+            result[OutcolOutrow] = 0;
+        }
+
+    int32_t my_sum[12];
+    int wT_loc = *wT;
+    int wB_loc = *wB;
+    int wL_loc = *wL;
+    int wR_loc = *wR;
+
+    //slide the convolution kernel over the image (within defined image window) to get each pixel of result array
+    for (outrow = *wT + ((kh - 1) / 2); outrow <= *wB - (kh - 1) / 2; outrow++)
+    {
+        for (outcol = *wL + (kh - 1) / 2; outcol <= *wR - (kw - 1) / 2; outcol++)
+        {
+            //compute current pixel
+            //sum = 0;
 #ifdef DEBUG
-				if( (outrow == 2) && (outcol == 2) )//debug
-				{//debug
-					sstop = true; //debug
-				}//debug
+            if( (outrow == 2) && (outcol == 2) )//debug
+            {//debug
+                sstop = true; //debug
+            }//debug
 #endif
 #if SLOW_MATH
-                for (krow = 0; krow < kh; krow++)
-                    for (kcol = 0; kcol < kw; kcol++)
-                    {
-                        inrow = outrow - ((kh - 1) / 2) + krow;
-                        incol = outcol - ((kw - 1) / 2) + kcol;
-						IncolInrow = incol + (sw * inrow);
-                        sum += kernel[kcol][krow] * source[IncolInrow];
-
-                    }
-#else
-                /*
-
-                //pixel
-                sum=58.000000,kernel[0][0],source[1605]
-                sum=474.000000,kernel[1][0],source[1606]
-                sum=1209.000000,kernel[2][0],source[1607]
-
-                sum=1393.000000,kernel[0][1],source[1925]
-                sum=2929.000000,kernel[1][1],source[1926]
-                sum=5971.000000,kernel[2][1],source[1927]
-
-                sum=6601.000000,kernel[0][2],source[2245]
-                sum=9721.000000,kernel[1][2],source[2246]
-                sum=13698.000000,kernel[2][2],source[2247]
-
-                //pixel
-				sum=104.000000,kernel[0][0],source[1606]
-				sum=524.000000,kernel[1][0],source[1607]
-				sum=1259.000000,kernel[2][0],source[1608]
-				sum=1643.000000,kernel[0][1],source[1926]
-				sum=3515.000000,kernel[1][1],source[1927]
-				sum=6323.000000,kernel[2][1],source[1928]
-				sum=7163.000000,kernel[0][2],source[2246]
-				sum=9685.000000,kernel[1][2],source[2247]
-				sum=14031.000000,kernel[2][2],source[2248]
-
-				*/
-
-                // row 0
-                OutcolOutrow = outcol + (sw * outrow);
-                IncolInrow = OutcolOutrow - 642;
-
-                //inrow = outrow - ((kh - 1) / 2);
-                //incol = outcol - ((kw - 1) / 2);
-                //IncolInrow = incol + (sw * inrow);
-
-                neon_conv(&my_sum[0], &kernel_neon[0][0],&source[IncolInrow]);
-                sum = my_sum[0] + my_sum[1] + my_sum[2];
-
-                //printf("1 my_sum[0]=%d,my_sum[1]=%d,my_sum[2]=%d,my_sum[3]=%d,neon_sum=%ld\n",
-                //		my_sum[0], my_sum[1], my_sum[2], my_sum[3], sum);
-#if 0
-                //row 1
-                inrow = outrow - ((kh - 1) / 2) + 1;
-                incol = outcol - ((kw - 1) / 2);
-                IncolInrow = incol + (sw * inrow);
-
-                //neon_vma(&my_sum[4], &kernel_neon[1][0],&source[IncolInrow]);
-                //sum = my_sum[0] + my_sum[1] + my_sum[2];
-                printf("2 my_sum[0]=%d,my_sum[1]=%d,my_sum[2]=%d,my_sum[3]=%d,neon_sum=%ld,\n\
-                		\rIncolInrow=%d, kernel={%d,%d,%d,%d}, kern_neon={%d,%d,%d,%d}, source={%d,%d,%d,%d},\n",
-                		my_sum[4], my_sum[5], my_sum[6], my_sum[7], sum,
-                		IncolInrow,
-                		kernel[0][1],kernel[1][1],kernel[2][1],kernel[3][1],
-                		kernel_neon[0][1],kernel_neon[1][1],kernel_neon[2][1],kernel_neon[3][1],
-                		source[IncolInrow],source[IncolInrow+1],source[IncolInrow+2],source[IncolInrow+3]);
-
-                //row 2
-                inrow = outrow - ((kh - 1) / 2) + 2;
-                incol = outcol - ((kw - 1) / 2);
-                IncolInrow = incol + (sw * inrow);
-
-                //neon_vma(&my_sum[8], &kernel_neon[2][0],&source[IncolInrow]);
-                //sum = my_sum[0] + my_sum[1] + my_sum[2];
-                printf("3 my_sum[0]=%d,my_sum[1]=%d,my_sum[2]=%d,my_sum[3]=%d,neon_sum=%ld\n",
-                		my_sum[8], my_sum[9], my_sum[10], my_sum[11], sum);
-
-                //printf("sum=%ld\n", sum);
-#endif
-
-#if 0
-                printf("my_sum[0]=%d,my_sum[1]=%d,my_sum[2]=%d,neon_sum=%d\n\
-                		kernel[0][0]=%d,source[IncolInrow]=%d\n\
-                		kernel[1][0]=%d,source[IncolInrow+1]=%d\
-                		kernel[2][0]=%d,source[IncolInrow+2]=%d\n",
-                		my_sum[0], my_sum[1], my_sum[2], neon_sum,
-                		kernel[0][0], source[IncolInrow],
-                		kernel[1][0], source[IncolInrow+1],
-                		kernel[2][0], source[IncolInrow+2]);
-
-                sum += kernel[0][0] * source[IncolInrow];
-                printf("sum=%ld\n",sum);
-                sum += kernel[1][0] * source[IncolInrow+1];
-                printf("sum=%ld\n",sum);
-                sum += kernel[2][0] * source[IncolInrow+2];
-                printf("sum=%ld\n",sum);
-#endif
-
-#if 0
-                inrow = outrow - ((kh - 1) / 2) + 1;
-                incol = outcol - ((kw - 1) / 2) + 0;
-                IncolInrow = incol + (sw * inrow);
-                //printf("IncolInrow=%d\n",IncolInrow);
-                sum += kernel[0][1] * source[IncolInrow];
-                sum += kernel[1][1] * source[IncolInrow+1];
-                sum += kernel[2][1] * source[IncolInrow+2];
-
-                inrow = outrow - ((kh - 1) / 2) + 2;
-                incol = outcol - ((kw - 1) / 2) + 0;
-                IncolInrow = incol + (sw * inrow);
-                //printf("IncolInrow=%d\n",IncolInrow);
-                sum += kernel[0][2] * source[IncolInrow];
-                sum += kernel[1][2] * source[IncolInrow+1];
-                sum += kernel[2][2] * source[IncolInrow+2];
-
-
-                for (krow = 0; krow < 3; krow++)
+            for (krow = 0; krow < kh; krow++)
+                for (kcol = 0; kcol < kw; kcol++)
                 {
-                    for (kcol = 0; kcol < 3; kcol++)
-                    {
-                        inrow = outrow - ((kh - 1) / 2) + krow;
-                        incol = outcol - ((kw - 1) / 2) + kcol;
-						IncolInrow = incol + (sw * inrow);
-						sum += kernel[kcol][krow] * source[IncolInrow];
-                    }
+                    inrow = outrow - ((kh - 1) / 2) + krow;
+                    incol = outcol - ((kw - 1) / 2) + kcol;
+                    IncolInrow = incol + (sw * inrow);
+                    sum += kernel[kcol][krow] * source[IncolInrow];
+
                 }
+#else
+            OutcolOutrow = outcol + (sw * outrow);
+            IncolInrow = OutcolOutrow - 642;
+
+            neon_conv(&my_sum[0], &kernel_neon[0][0],&source[IncolInrow]);
+            sum = my_sum[0] + my_sum[1] + my_sum[2];
+
+            //printf("1 my_sum[0]=%d,my_sum[1]=%d,my_sum[2]=%d,my_sum[3]=%d,neon_sum=%ld\n",
+            //		my_sum[0], my_sum[1], my_sum[2], my_sum[3], sum);
 #endif
+            //temp = (*gain * sum / ksum + 1); //because gain is always setup as 1.0 in this example
 
-#endif
-                //temp = (*gain * sum / ksum + 1); //because gain is always setup as 1.0 in this example
+            temp = (sum / ksum + 1);
 
-
-                temp = (sum / ksum + 1);
-
-                //if (temp > maxint) temp = maxint; //limiter
-                //if (temp < -maxint) temp = -maxint;//limiter
-				//OutcolOutrow = outcol + (sw * outrow);
-                result[OutcolOutrow] = (int)(temp); //normalize & round to nearest integer
-                //printf("IncolInrow=%d,OutcolOutrow=%d,sub=%d\n",IncolInrow,OutcolOutrow, (OutcolOutrow-IncolInrow));
-            }
+            //if (temp > maxint) temp = maxint; //limiter
+            //if (temp < -maxint) temp = -maxint;//limiter
+            //OutcolOutrow = outcol + (sw * outrow);
+            result[OutcolOutrow] = (int)(temp); //normalize & round to nearest integer
+            //printf("IncolInrow=%d,OutcolOutrow=%d,sub=%d\n",IncolInrow,OutcolOutrow, (OutcolOutrow-IncolInrow));
         }
-       clock_end();
-     }
+    }
+   clock_end();
+ }
 
 	void ImageProcessingUtilities_FPGA::GrayHist( int *w, int *h, int *wL, int *wR, int*wT, int *wB, int gray[], int grayhist[], int *grayhist_size )
     { //  int[] GrayHist(int[,] gray)
